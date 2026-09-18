@@ -1,0 +1,5 @@
+id,name,model_id/id,group_id/id,perm_read,perm_write,perm_create,perm_unlink
+access_stock_conversion_user,stock.conversion.user,model_stock_conversion,stock.group_stock_user,1,1,1,0
+access_stock_conversion_manager,stock.conversion.manager,model_stock_conversion,stock.group_stock_manager,1,1,1,1
+access_stock_conversion_line_user,stock.conversion.line.user,model_stock_conversion_line,stock.group_stock_user,1,1,1,0
+access_stock_conversion_line_manager,stock.conversion.line.manager,model_stock_conversion_line,stock.group_stock_manager,1,1,1,1

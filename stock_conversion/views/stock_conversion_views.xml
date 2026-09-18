@@ -1,0 +1,153 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ===================== Form View ===================== -->
+    <record id="view_stock_conversion_form" model="ir.ui.view">
+        <field name="name">stock.conversion.form</field>
+        <field name="model">stock.conversion</field>
+        <field name="arch" type="xml">
+            <form string="Stock Conversion">
+                <header>
+                    <button name="action_process" type="object" string="Confirm / Move to Processing"
+                            class="oe_highlight" invisible="state != 'draft'"/>
+                    <button name="action_validate" type="object" string="Validate Conversion"
+                            class="oe_highlight" invisible="state != 'processing'"/>
+                    <button name="action_cancel" type="object" string="Cancel"
+                            invisible="state not in ('draft', 'processing')"/>
+                    <button name="action_draft" type="object" string="Reset to Draft"
+                            invisible="state != 'cancel'"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,processing,done"/>
+                </header>
+                <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_moves" type="object" class="oe_stat_button" icon="fa-truck"
+                                invisible="move_count == 0">
+                            <field name="move_count" widget="statinfo" string="Stock Moves"/>
+                        </button>
+                    </div>
+                    <div class="oe_title">
+                        <h1>
+                            <field name="name" readonly="1"/>
+                        </h1>
+                    </div>
+                    <group>
+                        <group string="Raw Material">
+                            <field name="company_id" groups="base.group_multi_company"/>
+                            <field name="date"/>
+                            <field name="source_location_id" readonly="state != 'draft'"/>
+                            <field name="processing_location_id" readonly="state != 'draft'"/>
+                            <field name="raw_material_id" readonly="state != 'draft'"/>
+                            <label for="raw_material_qty"/>
+                            <div class="o_row">
+                                <field name="raw_material_qty" readonly="state != 'draft'"/>
+                                <field name="raw_material_uom_id" readonly="state != 'draft'"
+                                       options="{'no_open': True, 'no_create': True}"/>
+                            </div>
+                        </group>
+                        <group string="Yield &amp; Scrap">
+                            <field name="scrap_location_id" readonly="state == 'done'"/>
+                            <field name="total_output_qty"/>
+                            <field name="scrap_qty"/>
+                            <field name="yield_percent" widget="percentage"/>
+                            <field name="total_raw_material_cost" invisible="state != 'done'"/>
+                            <field name="company_currency_id" invisible="1"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Finished Goods">
+                            <field name="conversion_line_ids" readonly="state == 'done'">
+                                <list editable="bottom">
+                                    <field name="finished_product_id"/>
+                                    <field name="destination_location_id"/>
+                                    <field name="product_qty"/>
+                                    <field name="product_uom_id" options="{'no_open': True, 'no_create': True}"/>
+                                    <field name="manual_ratio"/>
+                                    <field name="cost_allocation_ratio" readonly="not manual_ratio"/>
+                                    <field name="unit_cost" readonly="1" column_invisible="parent.state != 'done'"/>
+                                    <field name="allocated_cost" readonly="1" column_invisible="parent.state != 'done'"/>
+                                    <field name="company_id" column_invisible="1"/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Notes">
+                            <field name="notes" placeholder="Internal notes about this conversion..."/>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <!-- ===================== List View ===================== -->
+    <record id="view_stock_conversion_list" model="ir.ui.view">
+        <field name="name">stock.conversion.list</field>
+        <field name="model">stock.conversion</field>
+        <field name="arch" type="xml">
+            <list string="Stock Conversions" decoration-muted="state == 'cancel'" decoration-success="state == 'done'">
+                <field name="name"/>
+                <field name="date"/>
+                <field name="raw_material_id"/>
+                <field name="raw_material_qty" sum="Total Raw"/>
+                <field name="total_output_qty" sum="Total Output"/>
+                <field name="scrap_qty" sum="Total Scrap"/>
+                <field name="yield_percent" widget="percentage" avg="Avg Yield"/>
+                <field name="state" widget="badge"
+                       decoration-info="state == 'draft'"
+                       decoration-warning="state == 'processing'"
+                       decoration-success="state == 'done'"
+                       decoration-danger="state == 'cancel'"/>
+            </list>
+        </field>
+    </record>
+
+    <!-- ===================== Search View ===================== -->
+    <record id="view_stock_conversion_search" model="ir.ui.view">
+        <field name="name">stock.conversion.search</field>
+        <field name="model">stock.conversion</field>
+        <field name="arch" type="xml">
+            <search string="Search Stock Conversions">
+                <field name="name"/>
+                <field name="raw_material_id"/>
+                <field name="conversion_line_ids" string="Finished Product" filter_domain="[('conversion_line_ids.finished_product_id', 'ilike', self)]"/>
+                <filter string="Draft" name="filter_draft" domain="[('state', '=', 'draft')]"/>
+                <filter string="Processing" name="filter_processing" domain="[('state', '=', 'processing')]"/>
+                <filter string="Done" name="filter_done" domain="[('state', '=', 'done')]"/>
+                <filter string="Cancelled" name="filter_cancel" domain="[('state', '=', 'cancel')]"/>
+                <separator/>
+                <filter string="Date" name="filter_date" date="date"/>
+                <group expand="0" string="Group By">
+                    <filter string="Status" name="groupby_state" context="{'group_by': 'state'}"/>
+                    <filter string="Raw Material" name="groupby_raw_material" context="{'group_by': 'raw_material_id'}"/>
+                    <filter string="Date" name="groupby_date" context="{'group_by': 'date:month'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <!-- ===================== Action ===================== -->
+    <record id="action_stock_conversion" model="ir.actions.act_window">
+        <field name="name">Stock Conversions</field>
+        <field name="res_model">stock.conversion</field>
+        <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="view_stock_conversion_search"/>
+        <field name="context">{'search_default_filter_draft': 1, 'search_default_filter_processing': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Create your first Stock Conversion
+            </p>
+            <p>
+                Convert raw materials into one or more finished products -
+                cubed, steak, mince, strips, repackaged units - without
+                setting up a full Bill of Materials.
+            </p>
+        </field>
+    </record>
+
+    <!-- ===================== Menu ===================== -->
+    <menuitem id="menu_stock_conversion"
+              name="Stock Conversions"
+              parent="stock.menu_stock_warehouse_mgmt"
+              action="action_stock_conversion"
+              sequence="60"/>
+
+</odoo>
