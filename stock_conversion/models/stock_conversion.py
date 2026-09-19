@@ -71,7 +71,20 @@ class StockConversion(models.Model):
         help='Raw Material Quantity minus Total Output Qty. Routed to the '
              'Scrap / Loss Location when the conversion is validated.',
     )
-    yield_percent = fields.Float(string='Yield %', compute='_compute_totals', store=True)
+    yield_percent = fields.Float(string='Yield %', compute='_compute_totals', store=True,
+        help='Actual Finished Product Quantity / Total Input (Raw Material) Quantity * 100.')
+    scrap_percent = fields.Float(string='Loss / Scrap %', compute='_compute_totals', store=True,
+        help='Actual Scrap Quantity / Total Input (Raw Material) Quantity * 100.')
+
+    scrap_account_id = fields.Many2one(
+        'account.account', string='Scrap / Loss GL Account', compute='_compute_scrap_account',
+        help='The GL account that will be debited when the yield loss is scrapped: the '
+             '"Stock Valuation Account (Incoming)" configured on the Scrap / Loss Location '
+             'if set, otherwise the Raw Material\'s product category "Scrap / Loss Account". '
+             'Blank means neither is configured yet and scrap would fall back to the '
+             'category\'s generic Stock Output account - the conversion will refuse to '
+             'validate a non-zero yield loss until one of these is set.',
+    )
 
     company_currency_id = fields.Many2one(related='company_id.currency_id', string='Currency')
     total_raw_material_cost = fields.Monetary(
@@ -107,8 +120,21 @@ class StockConversion(models.Model):
                 else:
                     total += line.product_qty
             rec.total_output_qty = total
-            rec.scrap_qty = max(rec.raw_material_qty - total, 0.0)
+            scrap_qty = max(rec.raw_material_qty - total, 0.0)
+            rec.scrap_qty = scrap_qty
+            # Yield % = Actual Finished Product Qty / Total Input Qty * 100
+            # Loss/Scrap % = Actual Scrap Qty / Total Input Qty * 100
+            # Both are derived from the same raw_material_qty denominator with
+            # no intermediate rounding, so they always sum to exactly 100%.
             rec.yield_percent = (total / rec.raw_material_qty * 100.0) if rec.raw_material_qty else 0.0
+            rec.scrap_percent = (scrap_qty / rec.raw_material_qty * 100.0) if rec.raw_material_qty else 0.0
+
+    @api.depends('scrap_location_id.valuation_in_account_id', 'raw_material_id.categ_id')
+    def _compute_scrap_account(self):
+        for rec in self:
+            location_account = rec.scrap_location_id.valuation_in_account_id
+            category_account = rec.raw_material_id.categ_id.property_stock_scrap_account_id
+            rec.scrap_account_id = location_account or category_account or False
 
     def _compute_move_count(self):
         for rec in self:
@@ -213,6 +239,63 @@ class StockConversion(models.Model):
     def _get_available_qty(self, product, location):
         return product.with_context(location=location.id).qty_available
 
+    def _get_scrap_account(self):
+        """Resolve and enforce the GL account that must absorb the yield
+        loss, instead of letting it silently fall back to the product
+        category's generic Stock Output/Interim account (e.g. 130012).
+
+        Source of truth, in order:
+        1. The Scrap / Loss Location's own "Stock Valuation Account
+           (Incoming)" (valuation_in_account_id) - this is the field Odoo's
+           accounting engine actually reads when stock moves into a virtual
+           location, so it always wins if set.
+        2. The Raw Material's product category "Scrap / Loss Account"
+           (property_stock_scrap_account_id, added by this module) - used to
+           auto-configure the location the first time, so the two stay in
+           sync without the user having to know about developer-mode
+           location fields at all.
+
+        Raises if neither is configured, or if both are configured but
+        disagree - that mismatch means scrap would post somewhere other
+        than what the category says it should, which is exactly the kind
+        of silent misrouting this exists to prevent."""
+        self.ensure_one()
+        location = self.scrap_location_id
+        location_account = location.valuation_in_account_id
+        category_account = self.raw_material_id.categ_id.property_stock_scrap_account_id
+
+        if not location_account and not category_account:
+            raise UserError(_(
+                'No Scrap / Loss GL account is configured, so the yield loss would post to '
+                'the generic Stock Output/Interim account instead of a dedicated loss account. '
+                'Set a "Scrap / Loss Account" on the %(categ)s product category (Inventory > '
+                'Configuration > Product Categories), or set "Stock Valuation Account '
+                '(Incoming)" directly on the %(loc)s location (developer mode required).'
+            ) % {'categ': self.raw_material_id.categ_id.display_name, 'loc': location.display_name})
+
+        if category_account and not location_account:
+            # First time this location is used for this category: apply the
+            # category's configured account onto the location so Odoo's
+            # valuation engine actually uses it.
+            location.valuation_in_account_id = category_account.id
+            return category_account
+
+        if category_account and location_account and category_account != location_account:
+            raise UserError(_(
+                'The Scrap / Loss Account on the %(categ)s product category (%(cat_acc)s) does '
+                'not match the Stock Valuation Account (Incoming) already set on the %(loc)s '
+                'location (%(loc_acc)s). Please reconcile these two settings (Inventory > '
+                'Configuration > Locations, or Product Categories) before validating, so scrap '
+                'always posts to the account you expect.'
+            ) % {
+                'categ': self.raw_material_id.categ_id.display_name,
+                'cat_acc': category_account.display_name,
+                'loc': location.display_name,
+                'loc_acc': location_account.display_name,
+            })
+
+        return location_account
+
     def _validate_picking(self, picking):
         """Fully validate an internal transfer. button_validate() is the
         public, supported entry point for this (as opposed to the private
@@ -240,12 +323,19 @@ class StockConversion(models.Model):
     # ------------------------------------------------------------------
     def action_process(self):
         """Move the raw material from the Source Location into the
-        Processing Location using a standard internal stock.picking."""
+        Processing Location using a standard internal stock.picking.
+
+        Finished Goods lines are deliberately NOT required at this point:
+        in practice you don't know the exact yield split until the raw
+        material has actually been cut/portioned/repackaged. Add or adjust
+        the Finished Goods lines with the real, weighed quantities once
+        the record is in the Processing state, then click Validate
+        Conversion - that's the point where Total Output Qty, Yield Loss /
+        Scrap Qty and Yield % are calculated from what was actually
+        produced."""
         for rec in self:
             if rec.state != 'draft':
                 raise UserError(_('Only draft conversions can be moved to processing.'))
-            if not rec.conversion_line_ids:
-                raise UserError(_('Please add at least one Finished Goods line before processing.'))
 
             rounding = rec.raw_material_uom_id.rounding or 0.01
             available = rec._get_available_qty(rec.raw_material_id, rec.source_location_id)
@@ -292,10 +382,44 @@ class StockConversion(models.Model):
         return True
 
     def action_validate(self):
+        """Open the "Confirm Finished Goods Quantities" wizard instead of
+        executing the stock moves directly. The actual weighed output per
+        product must be reviewed, edited if needed, and explicitly
+        confirmed there before anything is scrapped, consumed or put away -
+        see StockConversionConfirmWizard.action_confirm() for the step that
+        actually calls _action_validate_confirmed()."""
+        self.ensure_one()
+        if self.state != 'processing':
+            raise UserError(_('Only conversions in Processing state can be validated.'))
+        if not self.conversion_line_ids:
+            raise UserError(_('Please add at least one Finished Goods line before validating.'))
+
+        wizard = self.env['stock.conversion.confirm.wizard'].create({
+            'conversion_id': self.id,
+            'line_ids': [(0, 0, {
+                'conversion_line_id': line.id,
+                'done_qty': line.product_qty,
+            }) for line in self.conversion_line_ids],
+        })
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Confirm Finished Goods Quantities'),
+            'res_model': 'stock.conversion.confirm.wizard',
+            'view_mode': 'form',
+            'res_id': wizard.id,
+            'target': 'new',
+        }
+
+    def _action_validate_confirmed(self):
         """Scrap the yield-loss portion of the raw material, consume the
         remainder into the virtual Production location, then re-issue it as
         the finished goods lines into their destinations, allocating the
-        actual consumed cost across the lines."""
+        actual consumed cost across the lines.
+
+        Called only from StockConversionConfirmWizard.action_confirm(),
+        after the confirmed "Done Quantities" have already been written
+        onto conversion_line_ids and Total Output Qty / Yield Loss / Scrap
+        Qty have been recalculated from them."""
         for rec in self:
             if rec.state != 'processing':
                 raise UserError(_('Only conversions in Processing state can be validated.'))
@@ -322,6 +446,7 @@ class StockConversion(models.Model):
             #    so Odoo's own valuation/accounting engine records the loss
             #    at the product's current cost.
             if float_compare(rec.scrap_qty, 0.0, precision_rounding=rounding) > 0:
+                rec._get_scrap_account()  # raises if not configured / mismatched
                 scrap = self.env['stock.scrap'].create({
                     'product_id': rec.raw_material_id.id,
                     'product_uom_id': rec.raw_material_uom_id.id,

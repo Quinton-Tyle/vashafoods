@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- ===================== Confirm Finished Goods Quantities Wizard ===================== -->
+    <record id="view_stock_conversion_confirm_wizard_form" model="ir.ui.view">
+        <field name="name">stock.conversion.confirm.wizard.form</field>
+        <field name="model">stock.conversion.confirm.wizard</field>
+        <field name="arch" type="xml">
+            <form string="Confirm Finished Goods Quantities">
+                <p class="text-muted">
+                    Enter the actual, weighed quantity produced for each finished product.
+                    Yield %, Loss / Scrap % and the Scrap Qty below update as you type, and
+                    nothing is scrapped, consumed or put away until you click Confirm &amp; Process.
+                </p>
+                <group>
+                    <group>
+                        <field name="raw_material_id" readonly="1"/>
+                        <label for="raw_material_qty"/>
+                        <div class="o_row">
+                            <field name="raw_material_qty" readonly="1"/>
+                            <field name="raw_material_uom_id" readonly="1"/>
+                        </div>
+                    </group>
+                    <group>
+                        <field name="total_done_qty" readonly="1"/>
+                        <field name="scrap_qty_preview" readonly="1"/>
+                        <field name="yield_percent_preview" widget="percentage" readonly="1"/>
+                        <field name="scrap_percent_preview" widget="percentage" readonly="1"/>
+                    </group>
+                </group>
+                <field name="line_ids">
+                    <list editable="bottom">
+                        <field name="finished_product_id" readonly="1"/>
+                        <field name="destination_location_id" readonly="1"/>
+                        <field name="planned_qty" readonly="1"/>
+                        <field name="done_qty"/>
+                        <field name="product_uom_id" readonly="1"/>
+                    </list>
+                </field>
+                <footer>
+                    <button name="action_confirm" type="object" string="Confirm &amp; Process"
+                            class="oe_highlight"/>
+                    <button string="Cancel" special="cancel"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+
+    <!-- ===================== product.category: Scrap / Loss Account ===================== -->
+    <!-- Appended generically at the end of the form's <sheet> rather than
+         anchored to a specific existing field, since the internal layout
+         of the stock/account inherited views for product.category can
+         differ across Odoo builds/localizations; this keeps the module
+         installable even if that layout changes. -->
+    <record id="view_category_form_inherit_stock_conversion" model="ir.ui.view">
+        <field name="name">product.category.form.inherit.stock.conversion</field>
+        <field name="model">product.category</field>
+        <field name="inherit_id" ref="product.product_category_form_view"/>
+        <field name="arch" type="xml">
+            <xpath expr="//sheet" position="inside">
+                <group string="Stock Conversion">
+                    <field name="property_stock_scrap_account_id"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+
+</odoo>

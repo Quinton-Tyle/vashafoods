@@ -3,3 +3,5 @@ access_stock_conversion_user,stock.conversion.user,model_stock_conversion,stock.
 access_stock_conversion_manager,stock.conversion.manager,model_stock_conversion,stock.group_stock_manager,1,1,1,1
 access_stock_conversion_line_user,stock.conversion.line.user,model_stock_conversion_line,stock.group_stock_user,1,1,1,0
 access_stock_conversion_line_manager,stock.conversion.line.manager,model_stock_conversion_line,stock.group_stock_manager,1,1,1,1
+access_stock_conversion_confirm_wizard_user,stock.conversion.confirm.wizard.user,model_stock_conversion_confirm_wizard,stock.group_stock_user,1,1,1,1
+access_stock_conversion_confirm_wizard_line_user,stock.conversion.confirm.wizard.line.user,model_stock_conversion_confirm_wizard_line,stock.group_stock_user,1,1,1,1

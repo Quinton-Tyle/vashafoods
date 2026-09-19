@@ -46,15 +46,30 @@
                         </group>
                         <group string="Yield &amp; Scrap">
                             <field name="scrap_location_id" readonly="state == 'done'"/>
+                            <field name="scrap_account_id"/>
                             <field name="total_output_qty"/>
                             <field name="scrap_qty"/>
                             <field name="yield_percent" widget="percentage"/>
+                            <field name="scrap_percent" widget="percentage"/>
                             <field name="total_raw_material_cost" invisible="state != 'done'"/>
                             <field name="company_currency_id" invisible="1"/>
                         </group>
                     </group>
                     <notebook>
                         <page string="Finished Goods">
+                            <div class="alert alert-info" role="alert" invisible="state != 'draft'">
+                                Optional at this stage. You can plan the expected split here, or
+                                leave this empty and fill in the actual weighed quantities once
+                                the raw material is in Processing.
+                            </div>
+                            <div class="alert alert-warning" role="alert" invisible="state != 'processing'">
+                                Enter the actual quantity produced for each finished product,
+                                once weighed. Clicking "Validate Conversion" opens a confirmation
+                                step where these Done Quantities are reviewed one more time -
+                                Total Output Qty, Yield Loss / Scrap Qty, Yield % and Loss/Scrap %
+                                are calculated from what you confirm there, before anything is
+                                scrapped, consumed or put away.
+                            </div>
                             <field name="conversion_line_ids" readonly="state == 'done'">
                                 <list editable="bottom">
                                     <field name="finished_product_id"/>
