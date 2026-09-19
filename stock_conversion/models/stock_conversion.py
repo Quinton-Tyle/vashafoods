@@ -213,6 +213,28 @@ class StockConversion(models.Model):
     def _get_available_qty(self, product, location):
         return product.with_context(location=location.id).qty_available
 
+    def _validate_picking(self, picking):
+        """Fully validate an internal transfer. button_validate() is the
+        public, supported entry point for this (as opposed to the private
+        stock.move._action_done()); it can, in principle, return a wizard
+        action instead of completing synchronously (e.g. if a product
+        unexpectedly requires lots/serials, or reservation didn't cover the
+        full demand). Since every move here is created with picked=True and
+        its full demand already reserved, that should never happen - but we
+        fail loudly instead of silently leaving the picking half-done if it
+        ever does."""
+        result = picking.button_validate()
+        if isinstance(result, dict):
+            raise UserError(_(
+                'Validating the internal transfer %(picking)s triggered an unexpected '
+                'confirmation step instead of completing directly (dialog: %(name)s). This '
+                'usually means a product requires lots/serial numbers that were not set, or '
+                'stock changed between the availability check and validation. Please open '
+                'the transfer "%(picking)s" directly under Inventory > Operations > Transfers '
+                'to resolve it, then retry.'
+            ) % {'picking': picking.name, 'name': result.get('name') or result.get('res_model') or ''})
+        return result
+
     # ------------------------------------------------------------------
     # Workflow actions
     # ------------------------------------------------------------------
@@ -257,9 +279,13 @@ class StockConversion(models.Model):
             })
             picking.action_confirm()
             picking.action_assign()
-            for move in picking.move_ids:
-                move.quantity_done = move.product_uom_qty
-            picking._action_done()
+            # Odoo 17+: there is no "quantity_done" field on stock.move anymore.
+            # _action_assign() already reserved the full demand into each move
+            # line's `quantity` (guaranteed by the availability check above);
+            # `picked = True` is what marks that reserved quantity as actually
+            # moved rather than merely reserved.
+            picking.move_ids.picked = True
+            rec._validate_picking(picking)
 
             rec.processing_picking_id = picking.id
             rec.state = 'processing'
@@ -326,7 +352,7 @@ class StockConversion(models.Model):
             })
             consumption_move._action_confirm()
             consumption_move._action_assign()
-            consumption_move.quantity_done = consume_qty
+            consumption_move.picked = True
             consumption_move._action_done()
             rec.consumption_move_id = consumption_move.id
 
@@ -381,9 +407,9 @@ class StockConversion(models.Model):
                 picking.action_confirm()
                 picking.action_assign()
                 for move in picking.move_ids:
-                    move.quantity_done = move.product_uom_qty
                     move.price_unit = unit_cost
-                picking._action_done()
+                picking.move_ids.picked = True
+                rec._validate_picking(picking)
 
                 line.write({'unit_cost': unit_cost, 'allocated_cost': allocated_cost})
                 pickings |= picking
